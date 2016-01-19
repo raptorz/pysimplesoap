@@ -209,13 +209,18 @@ class SoapClient(object):
             body.import_node(parameters[0])
         elif parameters:
             # marshall parameters:
-            use_ns = None if (self.__soap_server == "jetty" or self.qualified is False) else True
+            if self.__soap_server == "no_children_ns":
+                children_ns = False
+                use_ns = None
+            else:
+                children_ns = True
+                use_ns = None if (self.__soap_server == "jetty" or self.qualified is False) else True
             for k, v in parameters:  # dict: tag=valor
                 if hasattr(v, "namespaces") and use_ns:
                     ns = v.namespaces.get(None, True)
                 else:
                     ns = use_ns
-                getattr(request, method).marshall(k, v, ns=ns)
+                getattr(request, method).marshall(k, v, ns=ns, add_children_ns=children_ns)
         elif self.__soap_server in ('jbossas6',):
             # JBossAS-6 requires no empty method parameters!
             delattr(request("Body", ns=list(soap_namespaces.values()),), method)

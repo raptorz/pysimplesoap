@@ -484,13 +484,13 @@ class SimpleXMLElement(object):
                 else:
                     # simple type
                     ns = None
-                child.marshall(k, v, add_comments=add_comments, ns=ns)
+                child.marshall(k, v, add_comments=add_comments, ns=ns, add_children_ns=add_children_ns)
         elif isinstance(value, tuple):  # serialize tuple (<key>value</key>)
             child = add_child and self.add_child(name, ns=ns) or self
             if not add_children_ns:
                 ns = False
             for k, v in value:
-                getattr(self, name).marshall(k, v, add_comments=add_comments, ns=ns)
+                getattr(self, name).marshall(k, v, add_comments=add_comments, ns=ns, add_children_ns=add_children_ns)
         elif isinstance(value, list): # serialize lists name: [value1, value2]
             # list elements should be a dict with one element:
             # 'vats': [{'vat': {'vat_amount': 50, 'vat_percent': 5}}, {...}]
@@ -502,7 +502,7 @@ class SimpleXMLElement(object):
             if add_comments:
                 child.add_comment("Repetitive array of:")
             for i, t in enumerate(value):
-                child.marshall(name, t, False, add_comments=add_comments, ns=ns)
+                child.marshall(name, t, False, add_comments=add_comments, ns=ns, add_children_ns=add_children_ns)
                 # "jetty" arrays: add new base node (if not last) -see abobe-
                 # TODO: this could be an issue for some arrays of single values
                 if isinstance(t, dict) and len(t) > 1 and i < len(value) - 1:
