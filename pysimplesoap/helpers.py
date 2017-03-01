@@ -208,9 +208,9 @@ def process_element(elements, element_name, node, element_type, xsd_uri,
                                 # get the complext element:
                                 ref_type = "complexType"
                                 key = make_key(type_name, ref_type, fn_namespace)
-                                fn_complex = elements.setdefault(key, Struct())
+                                fn_complex = elements.setdefault(key, Struct(key))
                                 # create an indirect struct {type_name: ...}:
-                                fn_array = Struct()
+                                fn_array = Struct(key)
                                 fn_array[type_name] = fn_complex
                                 fn_array.namespaces[None] = fn_namespace   # set the default namespace
                                 fn_array.qualified = qualified
@@ -235,7 +235,7 @@ def process_element(elements, element_name, node, element_type, xsd_uri,
                 else:
                     ref_type = "element"
                 key = make_key(type_name, ref_type, fn_namespace)
-                fn = elements.setdefault(key, Struct())
+                fn = elements.setdefault(key, Struct(key))
 
             if e['maxOccurs'] == 'unbounded' or (uri == soapenc_uri and type_name == 'Array'):
                 # it's an array... TODO: compound arrays? and check ns uri!
@@ -285,7 +285,7 @@ def process_element(elements, element_name, node, element_type, xsd_uri,
         # add the processed element to the main dictionary (if not extension):
         if new_struct:
             key = make_key(element_name, element_type, namespace)
-            elements.setdefault(key, Struct()).update(struct)
+            elements.setdefault(key, Struct(key)).update(struct)
 
 
 def postprocess_element(elements, processed):
@@ -457,8 +457,8 @@ def datetime_u(s):
         return _strptime(s, fmt)
     except ValueError:
         try:
-            # strip utc offset
-            if s[-3] == ":" and s[-6] in (' ', '-', '+'):
+            # strip zulu timezone suffix or utc offset
+            if s[-1] == "Z" or (s[-3] == ":" and s[-6] in (' ', '-', '+')):
                 try:
                     import iso8601
                     return iso8601.parse_date(s)
@@ -477,8 +477,8 @@ def datetime_u(s):
                 except ImportError:
                     pass
 
-                warnings.warn('removing unsupported UTC offset. Install `iso8601`, `isodate` or `python-dateutil` package to support it', RuntimeWarning)
-                s = s[:-6]
+                warnings.warn('removing unsupported "Z" suffix or UTC offset. Install `iso8601`, `isodate` or `python-dateutil` package to support it', RuntimeWarning)
+                s = s[:-1] if s[-1] == "Z" else s[:-6]
             # parse microseconds
             try:
                 return _strptime(s, fmt + ".%f")
@@ -512,6 +512,31 @@ class Alias(object):
 
     def __repr__(self):
         return "<alias '%s' for '%s'>" % (self.xml_type, self.py_type)
+
+    def __eq__(self, other):
+        return isinstance(other, Alias) and self.xml_type == other.xml_type
+        
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __gt__(self, other):
+        if isinstance(other, Alias): return self.xml_type > other.xml_type
+        if isinstance(other, Struct): return False
+        return True
+
+    def __lt__(self, other):
+        if isinstance(other, Alias): return self.xml_type < other.xml_type
+        if isinstance(other, Struct): return True
+        return False
+
+    def __ge__(self, other):
+        return self.__gt__(other) or self.__eq__(other)
+
+    def __le__(self, other):
+        return self.__gt__(other) or self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self.xml_type)
 
 if sys.version > '3':
     long = Alias(int, 'long')
@@ -577,7 +602,8 @@ if str not in TYPE_MAP:
 class Struct(dict):
     """Minimal ordered dictionary to represent elements (i.e. xsd:sequences)"""
 
-    def __init__(self):
+    def __init__(self, key=None):
+        self.key = key
         self.__keys = []
         self.array = False
         self.namespaces = {}     # key: element, value: namespace URI
@@ -610,6 +636,8 @@ class Struct(dict):
         return [(key, self[key]) for key in self.__keys]
 
     def update(self, other):
+        if isinstance(other, Struct) and other.key:
+            self.key = other.key
         for k, v in other.items():
             self[k] = v
         # do not change if we are an array but the other is not:
@@ -624,19 +652,55 @@ class Struct(dict):
 
     def copy(self):
         "Make a duplicate"
-        new = Struct()
+        new = Struct(self.key)
         new.update(self)
         return new
+
+    def __eq__(self, other):
+        return isinstance(other, Struct) and self.key == other.key and self.key != None
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __gt__(self, other):
+        if isinstance(other, Struct): return (self.key[2], self.key[0], self.key[1]) > (other.key[2], other.key[0], other.key[1])
+        return True
+
+    def __lt__(self, other):
+        if isinstance(other, Struct): return (self.key[2], self.key[0], self.key[1]) < (other.key[2], other.key[0], other.key[1])
+        return False
+
+    def __ge__(self, other):
+        return self.__gt__(other) or self.__eq__(other)
+
+    def __le__(self, other):
+        return self.__gt__(other) or self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self.key)
 
     def __str__(self):
         return "%s" % dict.__str__(self)
 
     def __repr__(self):
-        try:
-            s = "{%s}" % ", ".join(['%s: %s' % (repr(k), repr(v)) for k, v in self.items()])
-        except RuntimeError as e:  # maximum recursion depth exceeded
-            s = "{%s}" % ", ".join(['%s: %s' % (repr(k), unicode(e)) for k, v in self.items()])
-            warnings.warn(unicode(e), RuntimeWarning)
-        if self.array and False:
-            s = "[%s]" % s
+        if not self.key: return str(self.keys())
+        s = '%s' % self.key[0]
+        if self.keys():
+            s += ' {'
+            for k, t in self.items():
+                is_list = False
+                if isinstance(t, list):
+                    is_list = True
+                    t = t[0]
+                if isinstance(t, type):
+                    t = t.__name__
+                    pass
+                elif isinstance(t, Alias):
+                    t = t.xml_type
+                elif isinstance(t, Struct):
+                    t = t.key[0]
+                if is_list:
+                    t = [t]
+                s += '%s: %s, ' % (k, t)
+            s = s[:-2]+'}'
         return s
